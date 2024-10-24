@@ -46,19 +46,20 @@ voting_DR_margins <- voting_2020_wide %>%
 `
 
 
-voting_DR_margins %>%
+plt_DRmargins_logvotes <- voting_DR_margins %>%
 ggplot(aes(x = lognorm_votes, 
-           y = net_DR_margin 
-           #color = net_DR_margin
-           )) +
+           y = net_DR_margin )) +
   geom_point(alpha = 0.6,
-             color = "blue") +  # Add some transparency to avoid overplotting
+             color = "blue") +  
+  theme(panel.grid.major = element_line(color = "grey", linewidth = 0.5),  # Major grid lines
+    panel.grid.minor = element_line(color = "lightgrey", linewidth = 0.25))+  # Minor grid lines
   labs(title = "Vote Margin v Totals", 
        x = "total votes in county", 
-       y = "net margin") +
-  theme_minimal()  
+       y = "net margin")
 
-
+ggsave(here("plots/scatter_margins_logvotes.png"),
+       plot = plt_DRmargins_logvotes,
+       dpi = 300)
 
 
 
