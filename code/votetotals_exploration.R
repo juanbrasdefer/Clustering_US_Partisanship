@@ -72,7 +72,13 @@ voting_DR_margins_2020 <- voting_2020_wide %>%
     lognorm_votes_2020 = log(totalvotes_2020 + 1))
 
 
+# seeing number of counties that went republican vs democrat
+temp <- voting_DR_margins_2020 %>%
+  summarise(positive_count = sum(net_DR_margin_2020 > 0, na.rm = TRUE),
+            negative_count = sum(net_DR_margin_2020 < 0, na.rm = TRUE))
 
+sum(temp$positive_count) # 559 dem
+sum(temp$negative_count) # 2596 rep
 
 
 
@@ -144,7 +150,7 @@ voting_DR_margins_joined %>%
   ggplot(aes(x = net_DR_margin_2020, 
              y = net_DR_margin_2016)) +
   geom_point(alpha = 0.6,
-             color = "blue") +  
+             color = "#b85abf") +  
   theme(panel.grid.major = element_line(color = "grey", linewidth = 0.5),  # Major grid lines
         panel.grid.minor = element_line(color = "lightgrey", linewidth = 0.25))+  # Minor grid lines
   labs(title = "D-R Vote Margin 2020 vs 2016", 
@@ -156,36 +162,37 @@ ggsave(here("plots/scatter_margins_logvotes_2020.png"),
 
 
 
+# 2020 plots ----------------------------------------------------------------------------
+# Basic histogram of 2020 margins 
+ggplot(voting_DR_margins_joined, 
+       aes(x = net_DR_margin_2020, 
+           fill = net_DR_margin_2020 > 0)) +
+  geom_histogram(binwidth = 0.04, color = "black") +
+  labs(title = "Distribution of Net Vote Margin - 2020", x = "Net Vote Margin (D-R)", y = "Frequency") +
+  theme_minimal()  +
+  theme(legend.position = "none",
+        #panel.grid.major = element_line(color = "gray", size = 0.5),  # Major grid lines
+        panel.grid.minor = element_line(color = "lightgray", size = 0.25))
 
-
-
-
-
-
-# Basic histogram of 2020 votes (lognormalized)
-ggplot(voting_DR_margins_2020, 
-       aes(x = lognorm_votes_2020)) +
-  geom_histogram(binwidth = 0.5, fill = "blue", color = "black") +
-  labs(title = "Histogram of Log-Normalized Total Votes - 2020", x = "Log-Normalized Total Votes", y = "Count") +
-  theme_minimal()
-
-# so lovely, wow
-
-ggsave(here("plots/histogram_logvotes_2020.png"),
+ggsave(here("plots/histogram_netmargin_2020.png"),
        dpi = 300)
+
+
 
 
 # scatter 2020 margin vs log total votes
 voting_DR_margins_2020 %>%
 ggplot(aes(x = lognorm_votes_2020, 
-           y = net_DR_margin_2020 )) +
-  geom_point(alpha = 0.6,
-             color = "blue") +  
-  theme(panel.grid.major = element_line(color = "grey", linewidth = 0.5),  # Major grid lines
+           y = net_DR_margin_2020, 
+           color = net_DR_margin_2020 > 0 )) +
+  geom_point(alpha = 0.6, 
+             size = 1) +  
+  theme(legend.position = "none",
+        #panel.grid.major = element_line(color = "grey", linewidth = 0.5),  # Major grid lines
     panel.grid.minor = element_line(color = "lightgrey", linewidth = 0.25))+  # Minor grid lines
-  labs(title = "D-R Vote Margin v Log Vote Totals - 2020", 
-       x = "Log Total Votes in County", 
-       y = "Net D-R Margin")
+  labs(title = "Net Vote Margin vs. County Population - 2020", 
+       x = "Log of Total Votes in County", 
+       y = "Net Vote Margin (D-R)")
 
 ggsave(here("plots/scatter_margins_logvotes_2020.png"),
        dpi = 300)
@@ -214,9 +221,57 @@ voting_DR_margins_2020 %>%
         panel.grid.minor = element_line(color = "lightgrey", linewidth = 0.25))+  # Minor grid lines
   labs(title = "D-R Vote Margin v Margin Explained by DR Votes - 2020", 
        x = "Proportion Explained by DR Votes", 
-       y = "Net D-R Margin")
+       y = "Net Vote Margin (D-R)")
 
 ggsave(here("plots/scatter_margins_propexplainedbyDR_2020.png"),
        dpi = 300)
+
+
+
+
+
+
+
+
+
+# 2016 plots ----------------------------------------------------------------------------
+# Basic histogram of 2016 margins 
+ggplot(voting_DR_margins_joined, 
+       aes(x = net_DR_margin_2016, 
+           fill = net_DR_margin_2016 > 0)) +
+  geom_histogram(binwidth = 0.04, color = "black") +
+  labs(title = "Distribution of Net Vote Margin - 2016", x = "Net Vote Margin (D-R)", y = "Frequency") +
+  theme_minimal()  +
+  theme(legend.position = "none",
+        #panel.grid.major = element_line(color = "gray", size = 0.5),  # Major grid lines
+        panel.grid.minor = element_line(color = "lightgray", size = 0.25))
+
+ggsave(here("plots/histogram_netmargin_2016.png"),
+       dpi = 300)
+
+
+
+
+# scatter 2016 margin vs log total votes
+voting_DR_margins_2016 %>%
+  ggplot(aes(x = lognorm_votes_2016, 
+             y = net_DR_margin_2016, 
+             color = net_DR_margin_2016 > 0 )) +
+  geom_point(alpha = 0.6, 
+             size = 1) +  
+  theme(legend.position = "none",
+        #panel.grid.major = element_line(color = "grey", linewidth = 0.5),  # Major grid lines
+        panel.grid.minor = element_line(color = "lightgrey", linewidth = 0.25))+  # Minor grid lines
+  labs(title = "Log of Total Votes in County vs. Vote Margin - 2016", 
+       x = "Log of Total Votes in County", 
+       y = "Net D-R Vote Margin")
+
+ggsave(here("plots/scatter_margins_logvotes_2016.png"),
+       dpi = 300)
+
+
+
+
+
 
 
