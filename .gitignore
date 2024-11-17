@@ -7,3 +7,4 @@ data/ACSDP5Y2020.DP03-Data.csv
 data/DP2_2020_Temp.csv
 data/DP3_2020_Temp.csv
 data/temp_summary_census.csv
+*.csv
