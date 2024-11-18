@@ -80,7 +80,8 @@ currentyear <- "2020"
 
 # JOINING CENSUS DATASETS TOGETHER
 census_joined_2020 <- DP2_2020_5Y_edited %>%
-  filter(!(GEO_ID == "0500000US48301")) %>%
+  filter(!(GEO_ID == "0500000US48301"), # ?
+         !(GEO_ID == "0500000US48243")) %>% # texas JEFF DAVIS county; has no income val
   select(-"NAME") %>%
   inner_join(DP3_2020_5Y_edited, by = "GEO_ID") %>%
   mutate(across(c(

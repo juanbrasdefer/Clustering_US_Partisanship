@@ -62,8 +62,8 @@ voting_clean <- flattened_voting_wide %>%
     proportion_L = aggvotes_L / totalvotes,  # Libertarian proportion
     proportion_O = aggvotes_O / totalvotes   # 'Other' proportion
   ) %>%
-  mutate(proportion_explained_by_DR = round(proportion_D + proportion_R,
-         votemargin_DR = proportion_D - proportion_R),5) %>%
+  mutate(proportion_explained_by_DR = (proportion_D + proportion_R),
+         votemargin_DR = (proportion_D - proportion_R)) %>%
   mutate(norm_votes = (totalvotes - minvotes) / (maxvotes - minvotes),
          log_votes = log(totalvotes + 1))
 

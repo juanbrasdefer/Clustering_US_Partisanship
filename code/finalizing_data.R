@@ -22,14 +22,17 @@ clean_voting_all <- read_csv(here("data/clean/CountyPresReturns_2000-2020_Clean.
          votemargin_DR,
          proportion_explained_by_DR,
          totalvotes
-         )
+         ) %>%
+  mutate(proportion_explained_by_DR = round(proportion_explained_by_DR*100, 1), 
+         votemargin_DR = round(votemargin_DR*100, 1))
+  
 
 
 clean_census_2020 <- read_csv(here("data/clean/census_selected_2020.csv")) %>%
   select(-NAME)
 
 
-# Step 2 - join data and create target variable, 'Turnout Percentage' ------------------------------------------------------
+# Step 2 - join data ' ------------------------------------------------------
 
 pipeline_ready <- clean_voting_all %>%
   inner_join(clean_census_2020, by = "unique_id") 
