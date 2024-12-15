@@ -1,0 +1,571 @@
+---
+title: "Data Cleaning"
+author: "Juan Pablo Brasdefer"
+date: "2024-12-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Loading libraries and setting directory
+```{r}
+# libraries -------------------------------------------------------------------
+
+# loading
+library(tidyverse)
+library(here)
+library(stats) 
+library(skimr)
+library(DT) # data tables
+library(sf) # shapefile manipulation
+library(tigris)  # For county shapefiles
+
+# set working directory -------------------------------------------------------
+here::i_am("code/data_cleaning_knittable.Rmd")
+
+```
+
+
+## Voting Data
+```{r}
+
+# Step 1 - load data ----------------------------------------
+countypres_raw <- read_csv(here("data/raw/countypres_2000-2020.csv"))
+
+# Step 2 - Make Dataset Wide --------------------------------
+voting_as_wide <- countypres_raw %>%
+  pivot_wider(names_from = party, # making the dataset wide, columns from party var
+              values_from = candidatevotes) %>%
+  mutate(state_county = paste0(state_po,
+                               "-",
+                               county_name)) %>% # retain only our identifier columns
+  filter(!(is.na(county_fips))) %>% # drop NA fips:
+                                      # Connecticut - WRITE-IN
+                                      # Maine - Uniformed Service & Overseas
+                                      # Rhode Island - Federal Precinct 
+  filter(county_fips != "2938000") %>% # remove Kansas City because jackson county 
+                                       # already in dataset
+                                          # and this fips is nonexistent in census dataset
+                                          # so it'll get dropped anyway
+  filter(county_fips != 02099) # drop District 99 Arkansas which is empty in the data 
+
+
+
+# Step 3 - Flatten dataset and calculate aggregates, proportions, margins----------------
+flattened_voting_wide <- voting_as_wide %>%
+  group_by(year,
+           state,
+           state_po,
+           state_county,
+           county_name,
+           county_fips,
+           totalvotes) %>%
+  summarise(aggvotes_D = sum(DEMOCRAT, na.rm = TRUE), # addition to flatten into each year
+            aggvotes_R = sum(REPUBLICAN, na.rm = TRUE),
+            aggvotes_G = sum(GREEN, na.rm = TRUE),
+            aggvotes_L = sum(LIBERTARIAN, na.rm = TRUE),
+            aggvotes_O = sum(OTHER, na.rm = TRUE)) %>%
+  mutate(county_fips = str_pad(county_fips, 
+                               width = 5, # ensure we have standard fips syntax
+                               side = "left",
+                               pad = "0")) # 
+
+# calculate min and max for votes to do minmax normalization
+minvotes <- min(flattened_voting_wide$totalvotes)
+maxvotes <- max(flattened_voting_wide$totalvotes)
+
+# create all proportions
+voting_clean <- flattened_voting_wide %>%
+  mutate(unique_id = paste0(year, "_", county_fips)) %>% # year fips unique identifier
+  mutate(
+    proportion_D = aggvotes_D / totalvotes,  # Democratic proportion
+    proportion_R = aggvotes_R / totalvotes,  # Republican proportion
+    proportion_G = aggvotes_G / totalvotes,  # Green proportion
+    proportion_L = aggvotes_L / totalvotes,  # Libertarian proportion
+    proportion_O = aggvotes_O / totalvotes   # 'Other' proportion
+  ) %>%
+  mutate(proportion_explained_by_DR = (proportion_D + proportion_R), # non-DR margin votes
+         votemargin_DR = (proportion_D - proportion_R)) %>%
+  mutate(norm_votes = (totalvotes - minvotes) / (maxvotes - minvotes),
+         log_votes = log(totalvotes + 1)) # log for easier visualization
+
+# final clean dataset
+voting_clean %>%
+  write_csv(here("data/clean/CountyPresReturns_2000-2020_Clean.csv"))
+
+
+
+```
+
+### Plotting Voting Data 1 - Explorations
+```{r}
+# PLOTS - Voting Exploration -----------------------------------------------------------
+
+# Basic histogram of 2020 margins 
+voting_clean %>%
+  filter(year == 2020) %>%
+  ggplot(aes(x = votemargin_DR, 
+           fill = votemargin_DR > 0)) +
+  geom_histogram(binwidth = 0.04, color = "black") +
+  labs(title = "Distribution of Net Vote Margin - 2020", x = "Net Vote Margin (D-R)", y = "Frequency") +
+  theme_minimal()  +
+  theme(legend.position = "none",
+        #panel.grid.major = element_line(color = "gray", size = 0.5),  # Major grid lines
+        panel.grid.minor = element_line(color = "lightgray", size = 0.25))
+
+ggsave(here("plots/histogram_netmargin_2020.png"),
+       dpi = 300)
+
+
+
+
+# scatter 2020 margin vs log total votes
+voting_clean %>%
+  filter(year == 2020) %>%
+  ggplot(aes(x = votemargin_DR, 
+             y = log_votes, 
+             color = votemargin_DR > 0 )) +
+  geom_point(alpha = 0.6, 
+             size = 1) +  
+  theme(legend.position = "none",
+        #panel.grid.major = element_line(color = "grey", linewidth = 0.5),  # Major grid lines
+        panel.grid.minor = element_line(color = "lightgrey", linewidth = 0.25))+  # Minor grid lines
+  labs(title = "Net Vote Margin vs. County Population - 2020", 
+       x = "Net Vote Margin (D-R)",
+       y = "Total Votes in County")
+
+ggsave(here("plots/scatter_margins_logvotes_2020.png"),
+       dpi = 300)
+
+
+
+
+
+```
+
+
+### Cleaning Voting Data for Experiment 2: Counties with margins of high MAGNITUDE
+```{r}
+
+
+# Step 4 - ALT DATASET: Analysis of counties with significant margin changes -------------
+
+# take clean dataset
+margins_between_years <- voting_clean %>%
+  filter(year > 2011) %>% # only looking for obama forward
+  pivot_wider(id_cols = county_fips, # make dataset even wider so counties exist only 
+                                     # on 1 row each; we want to calc changes
+              names_from = year, 
+              values_from = votemargin_DR) %>% # end up with year margins as columns
+  rename(margin_2012 = "2012",
+         margin_2016 = "2016",
+         margin_2020 = "2020") %>%
+  mutate(delta_2012_16 = (margin_2016 - margin_2012), # t1 minus t2
+         delta_2016_20 = (margin_2020 - margin_2016)) %>% # t2 minus t3
+  mutate(abs_delta_2012_16 = abs(delta_2012_16), # take absolute value to find MAGNITUDE
+         abs_delta_2016_20 = abs(delta_2016_20)) %>% # same for 2016->20
+  filter(!is.na(margin_2012), 
+         !is.na(margin_2016),
+         !is.na(margin_2020)) # drop any obs that don't have data for ALL
+
+# save, as intermediate step
+margins_between_years %>%
+  write_csv(here("data/clean/margins_between_years.csv"))
+
+
+# Step 5 - percentile calculations for deciding point of dataset reduction -------------
+
+# 2012-16
+pctls_delta_2012_16 <- quantile(margins_between_years$abs_delta_2012_16, 
+                        probs = c(0.5, 0.67)) # find the specified divisions in data
+
+#pctls_delta_2012_16 # object with two probability thresholds
+pctls_50_delta_2012_16 <-  pctls_delta_2012_16[1][[1]] # first probability threshold (50%)
+
+
+# repeat for 2016-20
+pctls_delta_2016_20 <- quantile(margins_between_years$abs_delta_2016_20, 
+                                probs = c(0.5, 0.67)) # find the division points in data
+#pctls_delta_2016_20
+pctls_50_delta_2016_20 <- pctls_delta_2016_20[1][[1]] # first probability threshold (50%)
+
+
+# Step 6 - dataset reduction using thresholds -------------------------------------
+
+# only keep observations that had above average magnitudes in BOTH timeframes
+margins_between_years_subset <- margins_between_years %>%
+  filter((abs_delta_2012_16 > pctls_50_delta_2012_16) & (abs_delta_2016_20 > pctls_50_delta_2016_20)) # two logical evaluations, both must be true to be kept
+
+ # join successful counties back with vote data
+voting_clean_subset_largemargins <- margins_between_years_subset %>%
+  inner_join(voting_clean, # use innerjoin so that only successful counties are kept
+             by = "county_fips")
+
+# save
+voting_clean_subset_largemargins %>%
+  write_csv(here("data/clean/CountyPresReturns_subset_largemargins.csv"))
+
+
+```
+
+
+### Plotting Voting Data 2 - Delta Margins and Thresholds
+```{r}
+# PLOTS 2: Delta Margins and Thresholds  -------------------------------------------
+
+# Histogram - ABSOLUTE deltas 2012 to 2016
+# 2012 to 2016 margins
+margins_between_years %>%
+  ggplot( 
+    #aes(x = delta_2012_16)
+    aes(x = abs_delta_2012_16)
+    )+
+  geom_histogram(binwidth = 0.02,
+                 fill = "#351c99",
+                 #fill = "#359c4d",
+                 color = "black") +
+  labs(
+    #title = "delta_2012_16", 
+    title = "ABS delta_2012_16",
+    x = "Delta", y = "Frequency") +
+  #scale_x_continuous(breaks = c(-0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0, 0.1,0.2,  0.3, 0.4, 0.5, 0.6)) +
+  scale_x_continuous(breaks = c(0, 0.1,0.2,  0.3, 0.4, 0.5, 0.6)) +
+  geom_vline(xintercept = pctls_50_delta_2012_16,
+             linetype=2, colour="red") +
+  theme_minimal()  +
+  theme(legend.position = "none",
+        #panel.grid.major = element_line(color = "gray", size = 0.5),  # Major grid lines
+        panel.grid.minor = element_line(color = "lightgray", linewidth = 0.25))
+
+ggsave(here(
+  #"plots/delta_2012_16.png"
+  "plots/delta_2012_16_ABS.png"
+  ),
+  dpi = 300)
+
+
+
+
+# Histogram - ABSOLUTE deltas 2016 to 2020
+# 2016 to 2020 margins
+margins_between_years %>%
+  ggplot( 
+    #aes(x = delta_2016_20)
+    aes(x = abs_delta_2016_20)
+    )+
+  geom_histogram(
+    #binwidth = 0.015,
+    binwidth = 0.008,
+                 fill = "#351c99",
+                 #fill = "#359c4d",
+                 color = "black") +
+  labs(
+    #title = "delta_2016_20", 
+    title = "ABS delta_2016_20", 
+    x = "Delta", y = "Frequency") +
+  #scale_x_continuous(breaks = c(-0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0, 0.1,0.2,  0.3, 0.4, 0.5, 0.6)) +
+  scale_x_continuous(breaks = c(0, 0.05, 0.1,0.2,  0.3, 0.4, 0.5, 0.6)) +
+  geom_vline(xintercept=pctls_50_delta_2016_20,
+             linetype=2, colour="red") +
+  theme_minimal()  +
+  theme(legend.position = "none",
+        #panel.grid.major = element_line(color = "gray", size = 0.5),  # Major grid lines
+        panel.grid.minor = element_line(color = "lightgray", linewidth = 0.25))
+
+ggsave(here(
+  #"plots/delta_2016_20.png"
+  "plots/delta_2016_20_ABS.png"
+  ),
+  dpi = 300)
+
+
+
+
+
+# PLOTS 2: Delta Margins and Thresholds - now with subset only---------------------------
+
+# NON-ABSOLUTE (positive and negative shown as is)
+# 2012 to 2016
+margins_between_years_subset %>%
+  ggplot( 
+    aes(x = delta_2012_16)
+  )+
+  geom_histogram(binwidth = 0.02,
+                 fill = "#b079e8",
+                 #fill = "#359c4d",
+                 color = "black") +
+  labs(
+    title = "delta_2012_16, subset", 
+    x = "Delta", y = "Frequency") +
+  scale_x_continuous(breaks = c(-0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0, 0.1,0.2,  0.3, 0.4, 0.5, 0.6)) +
+  #geom_vline(xintercept = pctls_50_delta_2012_16,
+  #           linetype=2, colour="red") +
+  theme_minimal()  +
+  theme(legend.position = "none",
+        #panel.grid.major = element_line(color = "gray", size = 0.5),  # Major grid lines
+        panel.grid.minor = element_line(color = "lightgray", linewidth = 0.25))
+
+ggsave(here(
+  "plots/delta_2012_16_subset.png"
+),
+dpi = 300)
+
+
+# NON-ABSOLUTE (positive and negative shown as is)
+# 2012 to 2016
+margins_between_years_subset %>%
+  ggplot( 
+    aes(x = delta_2016_20)
+  )+
+  geom_histogram(binwidth = 0.02,
+                 fill = "#b079e8",
+                 #fill = "#359c4d",
+                 color = "black") +
+  labs(
+    title = "delta_2016_20, subset", 
+    x = "Delta", y = "Frequency") +
+  scale_x_continuous(breaks = c(-0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0, 0.1,0.2,  0.3, 0.4, 0.5, 0.6)) +
+  #geom_vline(xintercept = pctls_50_delta_2012_16,
+  #           linetype=2, colour="red") +
+  theme_minimal()  +
+  theme(legend.position = "none",
+        #panel.grid.major = element_line(color = "gray", size = 0.5),  # Major grid lines
+        panel.grid.minor = element_line(color = "lightgray", linewidth = 0.25))
+
+ggsave(here(
+  "plots/delta_2016_20_subset.png"
+),
+dpi = 300)
+
+
+
+
+```
+
+
+## Census Data
+
+```{r}
+
+
+# Cleaning - DP2 (Social) ------------------------------------------------------------
+
+# load data
+DP2_2020_5Y <- read_csv(here("data/raw/ACSDP5Y2020.DP02-Data.csv")) %>%
+  filter(!str_detect(NAME, "Puerto Rico")) # can't vote
+
+DP2_2020_5Y_edited <- DP2_2020_5Y %>%
+  select(-contains("Margin"),  # selecting columns
+         -contains("GRANDPARENTS"),
+         GEO_ID, 
+         NAME,
+         c("Estimate!!PLACE OF BIRTH!!Total population", # variables of interest
+           "Estimate!!PLACE OF BIRTH!!Total population!!Foreign born",
+           "Percent!!EDUCATIONAL ATTAINMENT!!Population 25 years and over!!Bachelor's degree or higher",
+           "Percent!!MARITAL STATUS!!Males 15 years and over!!Never married" )) %>%
+  rename( # renaming columns for easier manipulation
+    DP2_placebirth_population = "Estimate!!PLACE OF BIRTH!!Total population",
+    DP2_foreign_born = "Estimate!!PLACE OF BIRTH!!Total population!!Foreign born",
+    DP2_education_bachelormin_PE = "Percent!!EDUCATIONAL ATTAINMENT!!Population 25 years and over!!Bachelor's degree or higher",
+    DP2_marital_male_nevermarried_PE = "Percent!!MARITAL STATUS!!Males 15 years and over!!Never married" ) %>%
+  mutate(DP2_foreign_born_PE = (100*round((as.numeric(DP2_foreign_born)/ as.numeric(DP2_placebirth_population)),3))) %>%
+  select(-DP2_foreign_born)
+
+
+
+
+# Cleaning - DP3 (Economic) ------------------------------------------------------------
+
+# load data
+DP3_2020_5Y <- read_csv(here("data/raw/ACSDP5Y2020.DP03-Data.csv")) %>%
+  filter(!str_detect(NAME, "Puerto Rico")) # same deal
+
+DP3_2020_5Y_edited <- DP3_2020_5Y %>%
+  select(#-contains("Percent"),
+         -contains("Margin"),
+         GEO_ID,
+         NAME,
+         c("Estimate!!INCOME AND BENEFITS (IN 2020 INFLATION-ADJUSTED DOLLARS)!!Total households!!Median household income (dollars)",
+    "Percent!!EMPLOYMENT STATUS!!Population 16 years and over!!In labor force!!Civilian labor force!!Unemployed" )) %>%
+  rename(DP3_median_income = "Estimate!!INCOME AND BENEFITS (IN 2020 INFLATION-ADJUSTED DOLLARS)!!Total households!!Median household income (dollars)",
+         DP3_employment_unemp_PE = "Percent!!EMPLOYMENT STATUS!!Population 16 years and over!!In labor force!!Civilian labor force!!Unemployed")
+
+# find min and max for normalizing income values
+min_income <- min(DP3_2020_5Y_edited$DP3_median_income, na.rm = TRUE)
+max_income <- max(DP3_2020_5Y_edited$DP3_median_income, na.rm = TRUE)
+
+DP3_2020_5Y_edited <- DP3_2020_5Y_edited %>%
+  mutate(DP3_median_income_norm = (100*round((DP3_median_income - min_income) / 
+                             (max_income - min_income),3))) # minmax normalize
+
+
+
+
+
+# Joining DP2 and DP3 together --------------------------------------------------------
+
+currentyear <- "2020" # to add year value to our dataset
+
+# JOINING CENSUS DATASETS TOGETHER
+census_joined_2020 <- DP2_2020_5Y_edited %>%
+  filter(!(GEO_ID == "0500000US48301"), # not for study
+         !(GEO_ID == "0500000US48243")) %>% # texas JEFF DAVIS county; has no income val
+  select(-"NAME") %>%
+  inner_join(DP3_2020_5Y_edited, by = "GEO_ID") %>% # innejoin to get rid of NAs
+  mutate(across(c(
+    DP2_placebirth_population,
+    DP2_foreign_born_PE,
+    DP2_education_bachelormin_PE,
+    DP2_marital_male_nevermarried_PE,
+    DP3_median_income_norm,
+    DP3_employment_unemp_PE), 
+    as.numeric)) %>% # turn all our variable columns into numeric
+  mutate(census_year = currentyear) %>% # add a value of 2020 to each observation
+  mutate(county_fips = str_extract(GEO_ID, "(?<=US)\\d+")) %>% # quick regex for new id
+  mutate(unique_id = paste0(census_year, "_", county_fips)) %>% # "YEAR_FIPS"
+  select(-c(DP3_median_income,  # replaced by normalized version
+            DP2_placebirth_population,  # drop gross population; unsure if want in analysis
+            county_fips, # replaced by unique_id
+            census_year, # replaced by unique_id
+            GEO_ID)) # equivalent to fips
+
+# save
+census_joined_2020 %>%
+  write_csv(here("data/clean/census_selected_2020.csv"))
+
+
+```
+
+### Census - Summary Table of Interest Variables
+```{r}
+
+
+# rename variables for aesthetic purposes
+census_joined_2020 <- census_joined_2020    # Select only numeric columns
+rename(
+  Foreign = "DP2_foreign_born_PE",
+  Education = "DP2_education_bachelormin_PE",
+  Marital = "DP2_marital_male_nevermarried_PE",
+  Unemployment = "DP3_employment_unemp_PE",
+  Income = "DP3_median_income_norm") 
+
+
+
+# summarize all numeric columns in the dataframe
+summary_table <- census_normalized_2020 %>%
+  select(where(is.numeric)) %>%
+  skim()
+
+# create table
+census_summary_table <- summary_table %>%
+  select(-skim_type,
+         -n_missing,
+         -complete_rate) %>%
+  rename(Variable = "skim_variable",
+         Mean = "numeric.mean",
+         St.Dev = "numeric.sd",
+         P0 = "numeric.p0",
+         P25 = "numeric.p25",
+         P50 = "numeric.p50",  
+         P75 = "numeric.p75",
+         P100 = "numeric.p100" ,
+         Histogram = "numeric.hist" ) %>%
+  mutate(Mean = round(Mean, 3),
+         St.Dev = round(St.Dev, 3))
+
+
+# view table
+datatable(census_summary_table) %>%
+  formatStyle(
+    columns = c("Variable", "Mean", "St.Dev", "P0", "P25", "P75", "P100","Histogram"),
+    backgroundColor = "lightblue",
+    fontWeight = "bold"
+  ) 
+
+
+
+```
+
+## Finalizing Data
+```{r}
+# FULL dataset  ----------------------------------------------------------
+
+# step 1: load data
+
+# voting data
+clean_voting_all <- read_csv(here("data/clean/CountyPresReturns_2000-2020_Clean.csv")) %>%
+  select(unique_id,
+         year,
+         state_po,
+         county_name,
+         votemargin_DR,
+         proportion_explained_by_DR,
+         totalvotes
+         ) %>%
+  mutate(proportion_explained_by_DR = round(proportion_explained_by_DR*100, 1), 
+         votemargin_DR = round(votemargin_DR*100, 1))
+  
+# census data
+clean_census_2020 <- read_csv(here("data/clean/census_selected_2020.csv")) %>%
+  select(-NAME)
+
+
+# step 2: join census and voting data
+
+pipeline_ready <- clean_voting_all %>%
+  inner_join(clean_census_2020, by = "unique_id") 
+
+pipeline_ready %>%
+  write_csv(here("data/clean/votemargins_census_joined_2020.csv"))
+
+```
+
+
+```{r}
+# SUBSET dataset  ----------------------------------------------------------
+
+# step 1: load reduced (subset with only large margings) voting data
+
+voting_clean_subset_largemargins <- read_csv(here("data/clean/CountyPresReturns_subset_largemargins.csv")) %>%
+  select(unique_id,
+         year,
+         state_po,
+         county_name,
+         votemargin_DR,
+         proportion_explained_by_DR,
+         delta_2012_16,
+         delta_2016_20,
+         abs_delta_2012_16,
+         abs_delta_2016_20,
+         margin_2012,
+         margin_2016,
+         margin_2020,
+         totalvotes
+  ) %>%
+  mutate(votemargin_DR = round(votemargin_DR*100, 1),
+         proportion_explained_by_DR = round(proportion_explained_by_DR*100, 1),
+         margin_2012 = round(margin_2012*100, 1),
+         margin_2016 = round(margin_2016*100, 1),
+         margin_2020 = round(margin_2020*100, 1),
+         delta_2012_16 = round(delta_2012_16*100, 1),
+         delta_2016_20 = round(delta_2016_20*100, 1),
+         abs_delta_2012_16 = round(abs_delta_2012_16*100, 1),
+         abs_delta_2016_20 = round(abs_delta_2016_20*100, 1)
+  )
+
+# census data is already loaded
+
+# step 2: join census and reduced (subset with only large margings) voting data
+
+pipeline_ready_subset_largemargins <- voting_clean_subset_largemargins %>%
+  inner_join(clean_census_2020, by = "unique_id") 
+
+pipeline_ready_subset_largemargins %>%
+  write_csv(here("data/clean/votemargins_census_joined_2020_subset_largemargins.csv"))
+
+```
+
+
