@@ -1,0 +1,6 @@
+﻿county_fips,State,County,votemargin_DR,proportion_explained_by_DR,DP2_education_bachelormin_PE,DP2_marital_male_nevermarried_PE,DP2_foreign_born_PE,DP3_employment_unemp_PE,DP3_median_income_norm,totalvotes,delta_2012_16,delta_2016_20,dummy
+06115,CA,YUBA,-21.6,97,18,36.9,12.1,3.9,29.7,29796,4.78,1.24,one
+41059,OR,UMATILLA,-32,96.8,17.5,36.9,9.6,4,28.6,33038,6.32,2.04,one
+53025,WA,GRANT,-34.4,97.1,18,35.5,17.5,3.6,29.5,37680,5.47,3.42,one
+53021,WA,FRANKLIN,-14.5,96.8,18.9,37.4,21.6,3.7,35.7,32404,5.42,3.71,one
+53077,WA,YAKIMA,-7.7,97.4,17.6,36.4,18.4,4,26.1,96193,1.71,5.76,one
